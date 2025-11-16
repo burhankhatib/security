@@ -33,7 +33,8 @@ export default function CrawlModal({ onCrawlComplete }: CrawlModalProps) {
         throw new Error(crawlData.error || "Crawl failed");
       }
 
-      const chunks = crawlData.knowledgeBase?.chunksAdded || 0;
+      // Multi-source API returns totalChunksAdded
+      const chunks = crawlData.totalChunksAdded || 0;
       setChunksAdded(chunks);
 
       if (chunks === 0) {
