@@ -24,13 +24,19 @@ const KNOWLEDGE_QUERY = groq`
 `
 
 export async function fetchKnowledgeDocuments(): Promise<KnowledgeDocumentRecord[]> {
-  const documents = await client.fetch<Array<KnowledgeDocumentRecord>>(KNOWLEDGE_QUERY)
-  return documents.map((doc) => ({
-    ...doc,
-    tags: doc.tags ?? [],
-    importance: (doc.importance ?? 'standard') as KnowledgeDocumentRecord['importance'],
-    updatedAt: doc.updatedAt ?? new Date().toISOString(),
-    sourceFile: doc.sourceFile?.url ? doc.sourceFile : undefined,
-  }))
+  try {
+    const documents = await client.fetch<Array<KnowledgeDocumentRecord>>(KNOWLEDGE_QUERY)
+    return documents.map((doc) => ({
+      ...doc,
+      tags: doc.tags ?? [],
+      importance: (doc.importance ?? 'standard') as KnowledgeDocumentRecord['importance'],
+      updatedAt: doc.updatedAt ?? new Date().toISOString(),
+      sourceFile: doc.sourceFile?.url ? doc.sourceFile : undefined,
+    }))
+  } catch (error) {
+    console.warn('Failed to fetch knowledge documents from Sanity:', error)
+    // Return empty array if Sanity is not configured
+    return []
+  }
 }
 

@@ -17,17 +17,23 @@ export interface SystemPromptDocument {
 }
 
 export async function fetchLatestSystemPrompt(): Promise<SystemPromptDocument | null> {
-  const promptClient = client.withConfig({useCdn: false})
-  const result = await promptClient.fetch<SystemPromptDocument | null>(PROMPT_QUERY, {}, {
-    cache: 'no-store',
-    next: {revalidate: 0},
-  })
-  if (!result) return null
-  if (!result.prompt?.trim()) return null
+  try {
+    const promptClient = client.withConfig({useCdn: false})
+    const result = await promptClient.fetch<SystemPromptDocument | null>(PROMPT_QUERY, {}, {
+      cache: 'no-store',
+      next: {revalidate: 0},
+    })
+    if (!result) return null
+    if (!result.prompt?.trim()) return null
 
-  return {
-    ...result,
-    prompt: result.prompt.trim(),
+    return {
+      ...result,
+      prompt: result.prompt.trim(),
+    }
+  } catch (error) {
+    console.warn('Failed to fetch system prompt from Sanity:', error)
+    // Return null if Sanity is not configured
+    return null
   }
 }
 

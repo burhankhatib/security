@@ -6,23 +6,16 @@ export const apiVersion =
  * variables or the legacy SANITY_* ones.
  * Default to "production" so builds don't fail if Vercel envs are missing.
  */
-const resolvedDataset =
+export const dataset =
   process.env.NEXT_PUBLIC_SANITY_DATASET ||
   process.env.SANITY_DATASET ||
   'production'
 
-export const dataset = resolvedDataset
-
-export const projectId = assertValue(
+/**
+ * Project ID with fallback to dummy value for builds without Sanity
+ * This prevents build failures when Sanity is not configured
+ */
+export const projectId =
   process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ||
-    process.env.SANITY_PROJECT_ID,
-  'Missing environment variable: NEXT_PUBLIC_SANITY_PROJECT_ID'
-)
-
-function assertValue<T>(v: T | undefined, errorMessage: string): T {
-  if (v === undefined) {
-    throw new Error(errorMessage)
-  }
-
-  return v
-}
+  process.env.SANITY_PROJECT_ID ||
+  'dummy-project-id'
