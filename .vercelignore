@@ -1,0 +1,6 @@
+# Don't upload these to Vercel
+.env.local
+.env*.local
+node_modules
+.git
+
