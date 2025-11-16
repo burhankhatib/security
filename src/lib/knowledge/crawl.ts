@@ -55,6 +55,9 @@ export async function addCrawledContentToKnowledge(
   crawledContent: CrawledContent
 ): Promise<{ success: boolean; chunksAdded: number; error?: string }> {
   try {
+    console.log(`[Crawl] Adding content from: ${crawledContent.url}`)
+    console.log(`[Crawl] Content length: ${crawledContent.content?.length || 0} characters`)
+    
     const existingIndex = await loadKnowledgeIndex()
 
     // Create a temporary document record for the crawled content
@@ -72,8 +75,10 @@ export async function addCrawledContentToKnowledge(
 
     // Chunk the content
     const chunks = chunkDocument(tempDoc)
+    console.log(`[Crawl] Generated ${chunks.length} chunks from content`)
 
     if (chunks.length === 0) {
+      console.warn(`[Crawl] No chunks generated from ${crawledContent.url}`)
       return {
         success: false,
         chunksAdded: 0,
@@ -83,10 +88,12 @@ export async function addCrawledContentToKnowledge(
 
     // Generate embeddings
     const values = chunks.map((chunk) => chunk.content)
+    console.log(`[Crawl] Generating embeddings for ${values.length} chunks...`)
     const {embeddings} = await embedMany({
       model: openai.embedding(EMBEDDING_MODEL),
       values,
     })
+    console.log(`[Crawl] Embeddings generated successfully`)
 
     // Create indexed chunks
     const indexedChunks: KnowledgeChunk[] = chunks.map((chunk, index) => ({
@@ -109,14 +116,21 @@ export async function addCrawledContentToKnowledge(
       generatedAt: new Date().toISOString(),
     }
 
+    console.log(`[Crawl] Writing index with ${updatedIndex.chunks.length} total chunks`)
+    
+    // Ensure directory exists
+    await fs.mkdir(path.dirname(KNOWLEDGE_INDEX_PATH), { recursive: true })
+    
     // Write updated index
     await fs.writeFile(KNOWLEDGE_INDEX_PATH, JSON.stringify(updatedIndex, null, 2), 'utf8')
+    console.log(`[Crawl] Successfully wrote ${indexedChunks.length} new chunks to index`)
 
     return {
       success: true,
       chunksAdded: indexedChunks.length,
     }
   } catch (error) {
+    console.error('[Crawl] Error adding content to knowledge:', error)
     return {
       success: false,
       chunksAdded: 0,

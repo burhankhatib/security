@@ -125,9 +125,13 @@ export async function generateKnowledgeIndex(): Promise<KnowledgeIndexGeneration
 export async function loadKnowledgeIndex(): Promise<KnowledgeIndexFile> {
   try {
     const raw = await fs.readFile(KNOWLEDGE_INDEX_PATH, 'utf8')
-    return JSON.parse(raw) as KnowledgeIndexFile
+    const index = JSON.parse(raw) as KnowledgeIndexFile
+    const crawledCount = index.chunks.filter(c => c.tags?.includes('crawled')).length
+    console.log(`[Knowledge] Loaded index: ${index.chunks.length} total chunks (${crawledCount} crawled)`)
+    return index
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      console.warn('[Knowledge] No index file found, returning empty index')
       return {
         version: 1,
         generatedAt: new Date(0).toISOString(),

@@ -130,7 +130,7 @@ export async function POST(req: Request) {
           })
           .join("\n\n---\n\n");
 
-        augmentedSystemPrompt = `${baseSystemPrompt}\n\n🚨 CRITICAL INSTRUCTIONS - CRAWLED CONTENT IS PRIMARY SOURCE 🚨\n\nYou have been provided with crawled content from the website. This content MUST be your PRIMARY and ONLY source for answering the user's question.\n\nRULES:\n1. ALWAYS search through the crawled content FIRST before using any general knowledge\n2. If the crawled content contains ANY information related to the query (even partial), you MUST use ONLY that information\n3. Do NOT suggest alternative interpretations or general knowledge if crawled content exists\n4. Do NOT mention where the content came from\n5. Answer based SOLELY on the crawled content provided below\n6. Only if the crawled content has ABSOLUTELY NO relevant information should you say: "I couldn't find specific information about this in the available content. Based on general knowledge..."\n\nCRAWLED CONTENT:\n${context}\n\nRemember: The crawled content above is your PRIMARY source. Use it exclusively when it contains relevant information.`;
+        augmentedSystemPrompt = `${baseSystemPrompt}\n\n🚨 CRITICAL INSTRUCTIONS - CRAWLED CONTENT IS PRIMARY AND EXCLUSIVE SOURCE 🚨\n\nYou have been provided with crawled content from a specific website. This is your ONLY source of information.\n\nSTRICT RULES:\n1. Search through the crawled content below for information related to the query\n2. If you find ANY relevant information in the crawled content, answer ONLY using that information\n3. DO NOT mix crawled content with general knowledge\n4. DO NOT suggest alternative interpretations from outside sources\n5. DO NOT mention where the content came from or that it's crawled\n\n6. If the crawled content has NO relevant information, you MUST respond EXACTLY as follows:\n   "I couldn't find specific information about [topic] in the available content. Would you like me to search other sources and use general knowledge to answer your question?"\n\n7. Wait for user confirmation before providing any answer from general knowledge\n8. NEVER provide general knowledge answers without explicit user permission\n\nCRAWLED CONTENT:\n${context}\n\nRemember: Use ONLY the crawled content above. If it doesn't have the answer, ask the user for permission to use other sources.`;
 
         // Add knowledge docs for tracking
         const uniqueDocs = new Map<string, { title: string; slug: string }>();
@@ -142,37 +142,9 @@ export async function POST(req: Request) {
         const docList = Array.from(uniqueDocs.values());
         knowledgeDocs.splice(0, knowledgeDocs.length, ...docList);
       } else {
-        // Fallback to other knowledge sources if no crawled content
-        const allChunks = await retrieveRelevantChunks(queryText, 4);
-        if (allChunks.length > 0) {
-          const docMap = new Map<string, { title: string; slug: string }>();
-          const context = allChunks
-            .map((chunk) => {
-              docMap.set(chunk.slug, { title: chunk.docTitle, slug: chunk.slug });
-              return `Title: ${chunk.docTitle}
-Priority: ${chunk.importance}
-Excerpt: ${chunk.content}`;
-            })
-            .join("\n\n---\n\n");
-
-          const docList = Array.from(docMap.values());
-          knowledgeDocs.splice(0, knowledgeDocs.length, ...docList);
-          const tooltip = docList.map((doc) => doc.title).join(", ");
-
-          if (docList.length > 0) {
-            badges.push({
-              type: "knowledge",
-              label: docList.length > 1 ? `Knowledge Base (${docList.length})` : docList[0].title,
-              href: "/knowledge/knowledge-base.json",
-              tooltip: tooltip || undefined,
-            });
-          }
-
-          augmentedSystemPrompt = `${baseSystemPrompt}\n\nSECONDARY SOURCE - GENERAL KNOWLEDGE:\nThe following knowledge base excerpts may be relevant. Use them if they help answer the question. Do not mention the knowledge base or cite the excerpts explicitly.\n\n${context}\n\nNote: If this content does not contain sufficient information, you may use your general knowledge but must first state: "I couldn't find specific information about this in the available content. Based on general knowledge..."`;
-        } else {
-          // No content found at all - use general knowledge with disclaimer
-          augmentedSystemPrompt = `${baseSystemPrompt}\n\nIMPORTANT: No relevant content was found in the knowledge base. You may use your general knowledge to answer, but you must first state: "I couldn't find specific information about this in the available content. Based on general knowledge..."`;
-        }
+        // No crawled content found - inform user to populate knowledge base
+        console.log(`[Agent] No crawled content found in knowledge base - instructing user to refresh`)
+        augmentedSystemPrompt = `${baseSystemPrompt}\n\n⚠️ IMPORTANT: No crawled content is available in the knowledge base.\n\nYou MUST inform the user:\n"The knowledge base is empty. Please click the '↻ Refresh' button at the top to crawl the website and populate the knowledge base with content. Once the crawl completes, you'll see 'Ready (X chunks)' and I'll be able to answer questions based on the website content."\n\nDO NOT attempt to answer their question using general knowledge. Direct them to populate the knowledge base first.`;
       }
     }
   } catch (contextError) {
