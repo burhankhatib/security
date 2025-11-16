@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { addCrawledContentToKnowledge } from "@/lib/knowledge/crawl";
-import { getCrawlSourceUrl } from "@/lib/config/crawl";
+import { getCrawlSourcesFromSanity, type CrawlSource } from "@/lib/config/crawl";
 import {
   isCrawlCacheValid,
   saveCacheMetadata,
@@ -52,22 +52,35 @@ export async function POST(req: Request) {
     );
   }
 
-  // Use provided URL or fall back to configured source
-  const url = validationResult.data.url || getCrawlSourceUrl();
   const forceRefresh = validationResult.data.forceRefresh || false;
 
-  console.log(`[Crawl API] Target URL: ${url}`);
+  // Fetch crawl sources from Sanity
+  const crawlSources = await getCrawlSourcesFromSanity();
+  
+  if (crawlSources.length === 0) {
+    return NextResponse.json({
+      success: false,
+      error: "No active crawl sources found in Sanity. Please add crawl sources in Sanity Studio.",
+      hint: "Go to /studio and add documents to 'Crawl Sources'",
+    }, { status: 400 });
+  }
+
+  console.log(`[Crawl API] Found ${crawlSources.length} active sources from Sanity:`, 
+    crawlSources.map(s => `${s.name} (${s.url})`).join(', '));
+
+  // Create a combined URL signature for cache validation
+  const urlsSignature = crawlSources.map(s => s.url).sort().join('|');
 
   // Check cache first (unless force refresh is requested)
-  // Pass current URL to validate cache matches
-  if (!forceRefresh && (await isCrawlCacheValid(url))) {
+  // Pass URL signature to validate cache matches current sources
+  if (!forceRefresh && (await isCrawlCacheValid(urlsSignature))) {
     const cacheMetadata = await loadCacheMetadata();
     const ageMinutes = await getCacheAgeMinutes();
 
     return NextResponse.json({
       success: true,
       cached: true,
-      url: cacheMetadata?.url || url,
+      sources: crawlSources.map(s => ({ name: s.name, url: s.url })),
       message: `Using cached crawl data (${ageMinutes} minutes old). Cache refreshes every hour.`,
       cacheAgeMinutes: ageMinutes,
       lastCrawledAt: cacheMetadata?.lastCrawledAt,
@@ -76,122 +89,165 @@ export async function POST(req: Request) {
   }
 
   try {
-    console.log(`[Crawl API] Starting crawl for: ${url}`);
-    
-    // Try Tavily Search API first (more reliable than crawl for many sites)
-    const searchResponse = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `site:${url.replace(/^https?:\/\//, '').replace(/\/$/, '')}`,
-        max_results: 20,
-        include_domains: [url.replace(/^https?:\/\//, '').replace(/\/$/, '')],
-        search_depth: "advanced",
-        include_raw_content: true,
-      }),
-    });
-
-    if (!searchResponse.ok) {
-      console.error(`[Crawl API] Search failed with status ${searchResponse.status}`);
-      // Fall back to crawl API
-      const response = await fetch("https://api.tavily.com/crawl", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url,
-          max_depth: 3,
-          max_pages: 50,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Both Tavily search and crawl failed. Status: ${response.status}`,
-            details: errorText,
-          },
-          { status: response.status }
-        );
-      }
-
-      const rawData = await response.json();
-      console.log("[Crawl API] Using crawl API fallback");
-      // Continue processing below with rawData
-    } else {
-      console.log("[Crawl API] Using search API results - continuing to process");
+    // Clear old crawled content before adding new from multiple sources
+    if (validationResult.data.addToKnowledge) {
+      const { clearCrawledContent } = await import("@/lib/knowledge/crawl");
+      await clearCrawledContent();
+      console.log("[Crawl API] Cleared old crawled content");
     }
 
-    // Process search results
-    const searchData = await searchResponse.json();
-    console.log(`[Crawl API] Search returned ${searchData.results?.length || 0} results`);
+    let totalChunksAdded = 0;
+    const sourceResults: Array<{
+      source: string;
+      url: string;
+      success: boolean;
+      chunksAdded: number;
+      error?: string;
+    }> = [];
 
-    // If search returns no results, try Crawl API as fallback
-    if (!searchData.results || searchData.results.length === 0) {
-      console.log("[Crawl API] No search results, falling back to Crawl API...");
+    // Crawl each source sequentially
+    for (const source of crawlSources) {
+      console.log(`\n[Crawl API] Starting crawl for: ${source.name} (${source.url})`);
       
-      const crawlResponse = await fetch("https://api.tavily.com/crawl", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url,
-          max_depth: 5,
-          max_pages: 100,
-        }),
-      });
-
-      if (!crawlResponse.ok) {
-        const errorText = await crawlResponse.text();
-        return NextResponse.json({
+      try {
+        const rawData = await crawlSingleSource(source.url, apiKey);
+        
+        if (validationResult.data.addToKnowledge && rawData) {
+          const chunksAdded = await processAndAddToKnowledge(rawData, source.url, source.name);
+          totalChunksAdded += chunksAdded;
+          sourceResults.push({
+            source: source.name,
+            url: source.url,
+            success: true,
+            chunksAdded,
+          });
+          console.log(`[Crawl API] ✅ ${source.name}: ${chunksAdded} chunks added`);
+        }
+      } catch (error) {
+        console.error(`[Crawl API] ❌ Failed to crawl ${source.name}:`, error);
+        sourceResults.push({
+          source: source.name,
+          url: source.url,
           success: false,
-          error: `Both Tavily Search and Crawl API failed. The website might not be accessible.`,
-          details: `Search: No results. Crawl: ${crawlResponse.status} - ${errorText}`,
-        }, { status: crawlResponse.status });
+          chunksAdded: 0,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-
-      const crawlData = await crawlResponse.json();
-      console.log("[Crawl API] Using Crawl API fallback - processing response");
-      
-      // Continue processing with crawl data
-      const rawData = crawlData;
-      return await processCrawlData(rawData, url, validationResult, apiKey);
     }
 
-    // Convert search results to crawl-like format
-    const rawData = {
-      url,
-      title: searchData.results[0]?.title || 'Search Results',
-      content: searchData.results[0]?.content || searchData.results[0]?.raw_content || '',
-      pages: searchData.results.map((result: any) => ({
-        url: result.url,
-        title: result.title,
-        content: result.content || result.raw_content || '',
-      })),
-    };
+    // Save cache metadata with combined URL signature
+    if (validationResult.data.addToKnowledge) {
+      await saveCacheMetadata(urlsSignature, totalChunksAdded);
+    }
 
-    console.log("[Crawl API] Converted search results to crawl format");
-    
-    return await processCrawlData(rawData, url, validationResult, apiKey);
+    return NextResponse.json({
+      success: true,
+      message: `Successfully crawled ${crawlSources.length} sources`,
+      totalChunksAdded,
+      sources: sourceResults,
+      cached: false,
+      cacheAgeMinutes: 0,
+    });
   } catch (error) {
     console.error("[Crawl API] Error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to crawl website",
+        error: error instanceof Error ? error.message : "Failed to crawl websites",
       },
       { status: 500 }
     );
   }
+}
+
+// Helper function to crawl a single source URL
+async function crawlSingleSource(url: string, apiKey: string): Promise<any> {
+  // Try Tavily Search API first
+  const searchResponse = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: `site:${url.replace(/^https?:\/\//, '').replace(/\/$/, '')}`,
+      max_results: 20,
+      include_domains: [url.replace(/^https?:\/\//, '').replace(/\/$/, '')],
+      search_depth: "advanced",
+      include_raw_content: true,
+    }),
+  });
+
+  if (searchResponse.ok) {
+    const searchData = await searchResponse.json();
+    console.log(`[Crawl] Search API returned ${searchData.results?.length || 0} results`);
+    
+    if (searchData.results && searchData.results.length > 0) {
+      // Convert search results to standard format
+      return {
+        url,
+        title: searchData.results[0]?.title || 'Search Results',
+        content: searchData.results[0]?.content || searchData.results[0]?.raw_content || '',
+        pages: searchData.results.map((result: any) => ({
+          url: result.url,
+          title: result.title,
+          content: result.content || result.raw_content || '',
+        })),
+      };
+    }
+  }
+
+  // Fallback to Crawl API if search fails or returns no results
+  console.log(`[Crawl] Search failed or no results, trying Crawl API...`);
+  const crawlResponse = await fetch("https://api.tavily.com/crawl", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url,
+      max_depth: 5,
+      max_pages: 100,
+    }),
+  });
+
+  if (!crawlResponse.ok) {
+    throw new Error(`Crawl API failed with status ${crawlResponse.status}`);
+  }
+
+  const crawlData = await crawlResponse.json();
+  console.log(`[Crawl] Crawl API returned data`);
+  return crawlData;
+}
+
+// Helper function to process crawled data and add to knowledge base
+async function processAndAddToKnowledge(rawData: any, url: string, sourceName: string): Promise<number> {
+  const { addCrawledContentToKnowledge } = await import("@/lib/knowledge/crawl");
+  
+  // Process pages from crawl data
+  let totalChunks = 0;
+  const crawledAt = new Date().toISOString();
+
+  // Process all pages
+  if (rawData.pages && Array.isArray(rawData.pages)) {
+    for (const page of rawData.pages) {
+      if (page.content && page.content.trim().length > 20) {
+        const result = await addCrawledContentToKnowledge({
+          url: page.url || url,
+          title: `[${sourceName}] ${page.title || "Untitled Page"}`,
+          content: page.content,
+          crawledAt,
+        });
+        
+        if (result.success) {
+          totalChunks += result.chunksAdded;
+        }
+      }
+    }
+  }
+
+  return totalChunks;
 }
 
 // Helper function to process crawl data

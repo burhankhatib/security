@@ -4,7 +4,7 @@ import {
   loadCacheMetadata,
   getCacheAgeMinutes,
 } from "@/lib/knowledge/cache";
-import { getCrawlSourceUrl } from "@/lib/config/crawl";
+import { getCrawlSourcesFromSanity } from "@/lib/config/crawl";
 
 /**
  * Check crawl cache status without triggering a crawl
@@ -12,21 +12,23 @@ import { getCrawlSourceUrl } from "@/lib/config/crawl";
  */
 export async function GET() {
   try {
-    const configuredUrl = getCrawlSourceUrl();
-    // Pass current URL to validate cache matches configured URL
-    const isValid = await isCrawlCacheValid(configuredUrl);
+    const sanitySources = await getCrawlSourcesFromSanity();
+    const urlsSignature = sanitySources.map(s => s.url).sort().join('|');
+    
+    // Pass URL signature to validate cache matches current Sanity sources
+    const isValid = await isCrawlCacheValid(urlsSignature);
     const metadata = await loadCacheMetadata();
     const ageMinutes = await getCacheAgeMinutes();
 
-    console.log(`[Cache Check] Configured URL: ${configuredUrl}, Cache valid: ${isValid}, Cached URL: ${metadata?.url || 'none'}`);
+    console.log(`[Cache Check] Found ${sanitySources.length} sources from Sanity, Cache valid: ${isValid}`);
 
     return NextResponse.json({
       cacheValid: isValid,
       hasCache: metadata !== null,
       cacheAgeMinutes: ageMinutes,
       lastCrawledAt: metadata?.lastCrawledAt || null,
-      configuredUrl,
-      cachedUrl: metadata?.url || null,
+      sources: sanitySources.map(s => ({ name: s.name, url: s.url })),
+      cachedSignature: metadata?.url || null,
       chunksInCache: metadata?.chunksAdded || 0,
     });
   } catch (error) {

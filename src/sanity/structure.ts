@@ -6,6 +6,11 @@ export const structure: StructureResolver = (S) =>
     .title('Content')
     .items([
       S.listItem()
+        .title('Crawl Sources')
+        .schemaType('crawlSource')
+        .child(S.documentTypeList('crawlSource').title('Crawl Sources')),
+      S.divider(),
+      S.listItem()
         .title('Knowledge Base')
         .schemaType('knowledgeDocument')
         .child(S.documentTypeList('knowledgeDocument').title('Knowledge Documents')),
@@ -14,6 +19,6 @@ export const structure: StructureResolver = (S) =>
         .schemaType('systemPrompt')
         .child(S.documentTypeList('systemPrompt').title('System Prompts')),
       ...S.documentTypeListItems().filter(
-        (item) => !['knowledgeDocument', 'systemPrompt'].includes(item.getId() ?? ''),
+        (item) => !['knowledgeDocument', 'systemPrompt', 'crawlSource'].includes(item.getId() ?? ''),
       ),
     ])

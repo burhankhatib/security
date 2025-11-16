@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getCrawlSourceUrl } from "@/lib/config/crawl";
+import { getCrawlSourcesFromSanity } from "@/lib/config/crawl";
 
 interface TavilyCrawlResponse {
   url?: string;
@@ -10,10 +10,23 @@ interface TavilyCrawlResponse {
 
 export const crawlTool = {
   description:
-    "Crawl and extract content from the configured primary website source using Tavily's crawling API. Use this tool when you need fresh content or when the knowledge base doesn't have sufficient information. This is the PRIMARY source of information - always check this first before using general knowledge.",
+    "Crawl and extract content from the configured website sources (managed in Sanity CMS) using Tavily's crawling API. Use this tool when you need fresh content or when the knowledge base doesn't have sufficient information. This is the PRIMARY source of information - always check this first before using general knowledge.",
   inputSchema: z.object({}),
   execute: async () => {
-    const url = getCrawlSourceUrl();
+    // Fetch sources from Sanity
+    const sources = await getCrawlSourcesFromSanity();
+    
+    if (sources.length === 0) {
+      return {
+        success: false,
+        error: "No crawl sources configured in Sanity. Please add sources to the 'Crawl Sources' collection.",
+      };
+    }
+
+    // Use the first active source (highest priority)
+    const url = sources[0].url;
+    const sourceName = sources[0].name;
+    
     const apiKey = process.env.TAVILY_API_KEY;
     if (!apiKey) {
       return {
@@ -55,6 +68,7 @@ export const crawlTool = {
 
       return {
         success: true,
+        source: sourceName,
         url: data.url || url,
         title: data.title || "Untitled",
         content: data.content || "No content extracted",
