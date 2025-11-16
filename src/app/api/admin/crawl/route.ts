@@ -130,11 +130,38 @@ export async function POST(req: Request) {
     const searchData = await searchResponse.json();
     console.log(`[Crawl API] Search returned ${searchData.results?.length || 0} results`);
 
+    // If search returns no results, try Crawl API as fallback
     if (!searchData.results || searchData.results.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: `No search results found for ${url}. The website might not be indexed or accessible.`,
+      console.log("[Crawl API] No search results, falling back to Crawl API...");
+      
+      const crawlResponse = await fetch("https://api.tavily.com/crawl", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url,
+          max_depth: 5,
+          max_pages: 100,
+        }),
       });
+
+      if (!crawlResponse.ok) {
+        const errorText = await crawlResponse.text();
+        return NextResponse.json({
+          success: false,
+          error: `Both Tavily Search and Crawl API failed. The website might not be accessible.`,
+          details: `Search: No results. Crawl: ${crawlResponse.status} - ${errorText}`,
+        }, { status: crawlResponse.status });
+      }
+
+      const crawlData = await crawlResponse.json();
+      console.log("[Crawl API] Using Crawl API fallback - processing response");
+      
+      // Continue processing with crawl data
+      const rawData = crawlData;
+      return await processCrawlData(rawData, url, validationResult, apiKey);
     }
 
     // Convert search results to crawl-like format
@@ -150,6 +177,23 @@ export async function POST(req: Request) {
     };
 
     console.log("[Crawl API] Converted search results to crawl format");
+    
+    return await processCrawlData(rawData, url, validationResult, apiKey);
+  } catch (error) {
+    console.error("[Crawl API] Error:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to crawl website",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// Helper function to process crawl data
+async function processCrawlData(rawData: any, url: string, validationResult: any, apiKey: string) {
+  try {
     console.log("Tavily response structure:", {
       hasPages: Array.isArray(rawData.pages),
       pagesCount: rawData.pages?.length || 0,
