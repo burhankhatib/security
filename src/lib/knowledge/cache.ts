@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 
-const CACHE_DIR = path.join(process.cwd(), 'public', 'knowledge')
+// Use /tmp in production (Vercel/serverless) or local directory in development
+const CACHE_DIR = process.env.VERCEL 
+  ? path.join(os.tmpdir(), 'knowledge')
+  : path.join(process.cwd(), '.cache', 'knowledge')
+
 const CACHE_METADATA_PATH = path.join(CACHE_DIR, 'crawl-cache.json')
 
 export interface CrawlCacheMetadata {
