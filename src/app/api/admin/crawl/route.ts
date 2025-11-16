@@ -73,68 +73,95 @@ export async function POST(req: Request) {
   }
 
   try {
-    const response = await fetch("https://api.tavily.com/crawl", {
+    console.log(`[Crawl API] Starting crawl for: ${url}`);
+    
+    // Try Tavily Search API first (more reliable than crawl for many sites)
+    const searchResponse = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        url,
-        max_depth: 3,
-        max_pages: 50,
+        query: `site:${url.replace(/^https?:\/\//, '').replace(/\/$/, '')}`,
+        max_results: 20,
+        include_domains: [url.replace(/^https?:\/\//, '').replace(/\/$/, '')],
+        search_depth: "advanced",
+        include_raw_content: true,
       }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      return NextResponse.json(
-        {
-          error: `Tavily crawl failed with status ${response.status}`,
-          details: errorText,
+    if (!searchResponse.ok) {
+      console.error(`[Crawl API] Search failed with status ${searchResponse.status}`);
+      // Fall back to crawl API
+      const response = await fetch("https://api.tavily.com/crawl", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
         },
-        { status: response.status }
-      );
+        body: JSON.stringify({
+          url,
+          max_depth: 3,
+          max_pages: 50,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Both Tavily search and crawl failed. Status: ${response.status}`,
+            details: errorText,
+          },
+          { status: response.status }
+        );
+      }
+
+      const rawData = await response.json();
+      console.log("[Crawl API] Using crawl API fallback");
+      // Continue processing below with rawData
+    } else {
+      console.log("[Crawl API] Using search API results - continuing to process");
     }
 
-    const rawData = await response.json();
-    console.log("Tavily crawl response structure:", {
+    // Process search results
+    const searchData = await searchResponse.json();
+    console.log(`[Crawl API] Search returned ${searchData.results?.length || 0} results`);
+
+    if (!searchData.results || searchData.results.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: `No search results found for ${url}. The website might not be indexed or accessible.`,
+      });
+    }
+
+    // Convert search results to crawl-like format
+    const rawData = {
+      url,
+      title: searchData.results[0]?.title || 'Search Results',
+      content: searchData.results[0]?.content || searchData.results[0]?.raw_content || '',
+      pages: searchData.results.map((result: any) => ({
+        url: result.url,
+        title: result.title,
+        content: result.content || result.raw_content || '',
+      })),
+    };
+
+    console.log("[Crawl API] Converted search results to crawl format");
+    console.log("Tavily response structure:", {
       hasPages: Array.isArray(rawData.pages),
       pagesCount: rawData.pages?.length || 0,
       hasContent: !!rawData.content,
-      hasResults: Array.isArray(rawData.results),
-      keys: Object.keys(rawData),
-      firstPageSample: rawData.pages?.[0] ? Object.keys(rawData.pages[0]) : null,
+      mainContentLength: rawData.content?.length || 0,
     });
 
-    // Tavily crawl API returns different formats - handle all possible structures
-    let crawlData: {
-      url?: string;
-      content?: string;
-      title?: string;
-      pages?: Array<{ url: string; content: string; title?: string }>;
-    };
+    // Already converted to standard format above, so use rawData directly
+    let crawlData = rawData;
 
-    // Check if response has 'results' array (Tavily search format)
-    if (Array.isArray(rawData.results)) {
-      const results = rawData.results as Array<{
-        url?: string;
-        content?: string;
-        title?: string;
-        text?: string;
-        body?: string;
-      }>;
-      crawlData = {
-        url: rawData.url || url,
-        title: rawData.title || "Crawled Content",
-        content: results.map((r) => r.content || r.text || r.body || "").join("\n\n"),
-        pages: results.map((r) => ({
-          url: r.url || url,
-          content: r.content || r.text || r.body || "",
-          title: r.title || "Untitled Page",
-        })),
-      };
-    } else if (rawData.pages && Array.isArray(rawData.pages)) {
+    // Validate and enhance if needed
+    if (rawData.pages && Array.isArray(rawData.pages) && rawData.pages.length > 0) {
       // Direct crawl format with pages array - extract content from various possible fields
       const processedPages = rawData.pages.map((page: {
         url?: string;
@@ -167,27 +194,11 @@ export async function POST(req: Request) {
       crawlData = {
         url: rawData.url || url,
         title: rawData.title || "Crawled Content",
-        content: rawData.content || rawData.text || rawData.body || processedPages.map((p: { content: string }) => p.content).join("\n\n"),
+        content: rawData.content || processedPages.map((p: { content: string }) => p.content).join("\n\n"),
         pages: processedPages,
       };
-    } else if (rawData.content || rawData.text || rawData.body) {
-      // Single page content
-      crawlData = {
-        url: rawData.url || url,
-        title: rawData.title || "Untitled",
-        content: rawData.content || rawData.text || rawData.body || "",
-        pages: [],
-      };
-    } else {
-      // Fallback: try to extract any text content
-      const fallbackContent = rawData.markdown || rawData.html || JSON.stringify(rawData);
-      crawlData = {
-        url: rawData.url || url,
-        title: rawData.title || "Untitled",
-        content: fallbackContent,
-        pages: [],
-      };
     }
+    // If rawData already has proper structure from search conversion, keep it as is
     
     // Log what we extracted
     console.log("Extracted crawl data:", {
