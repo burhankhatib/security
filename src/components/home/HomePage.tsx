@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import CrawlModal from "@/components/CrawlModal";
 
 export default function HomePage() {
   const [input, setInput] = useState("");
@@ -10,8 +11,10 @@ export default function HomePage() {
     loading: boolean;
     ready: boolean;
     message: string;
-  }>({ loading: true, ready: false, message: "Loading knowledge base..." });
+  }>({ loading: true, ready: false, message: "Checking knowledge base..." });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCrawlModal, setShowCrawlModal] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
 
@@ -39,78 +42,74 @@ export default function HomePage() {
 
   const assistantActive = useMemo(() => messages.some((msg) => msg.role === "assistant"), [messages]);
 
-  // Auto-crawl on page load with cache
+  // Check if knowledge base needs initialization
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
 
     let mounted = true;
 
-    const initializeCrawl = async () => {
+    const checkInitialization = async () => {
       try {
-        // Check cache status first
+        // Check cache status
         const checkResponse = await fetch("/api/crawl/check");
         const checkData = await checkResponse.json();
 
-        if (checkData.cacheValid && mounted) {
+        if (!mounted) return;
+
+        // If cache is valid and has chunks, we're ready
+        if (checkData.cacheValid && checkData.chunksInCache > 0) {
           setCrawlStatus({
             loading: false,
             ready: true,
-            message: `Ready (cached ${checkData.cacheAgeMinutes}m ago)`,
+            message: `Ready (${checkData.chunksInCache} chunks)`,
           });
-          return;
-        }
-
-        // Cache expired or doesn't exist - trigger crawl
-        if (mounted) {
-          setCrawlStatus({
-            loading: true,
-            ready: false,
-            message: "Crawling website...",
-          });
-        }
-
-        const crawlResponse = await fetch("/api/admin/crawl", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ addToKnowledge: true }),
-        });
-
-        const crawlData = await crawlResponse.json();
-
-        if (mounted) {
-          if (crawlData.success) {
-            setCrawlStatus({
-              loading: false,
-              ready: true,
-              message: `Ready (${crawlData.knowledgeBase?.chunksAdded || 0} chunks)`,
-            });
-          } else {
-            setCrawlStatus({
-              loading: false,
-              ready: false,
-              message: "You can still ask questions",
-            });
-          }
+          setIsInitializing(false);
+        } else {
+          // No valid cache - show modal to force initialization
+          setShowCrawlModal(true);
+          setIsInitializing(false);
         }
       } catch (error) {
+        console.error("Initialization check error:", error);
         if (mounted) {
-          setCrawlStatus({
-            loading: false,
-            ready: false,
-            message: "You can still ask questions",
-          });
+          // On error, show modal to allow manual crawl
+          setShowCrawlModal(true);
+          setIsInitializing(false);
         }
-        console.error("Crawl initialization error:", error);
       }
     };
 
-    void initializeCrawl();
+    void checkInitialization();
 
     return () => {
       mounted = false;
     };
   }, []);
+
+  // Handle successful crawl from modal
+  const handleCrawlComplete = async () => {
+    setShowCrawlModal(false);
+    
+    // Refresh status
+    try {
+      const checkResponse = await fetch("/api/crawl/check");
+      const checkData = await checkResponse.json();
+      
+      setCrawlStatus({
+        loading: false,
+        ready: true,
+        message: `Ready (${checkData.chunksInCache} chunks)`,
+      });
+    } catch (error) {
+      console.error("Status refresh error:", error);
+      setCrawlStatus({
+        loading: false,
+        ready: true,
+        message: "Ready",
+      });
+    }
+  };
 
   const submitMessage = async () => {
     const trimmed = input.trim();
@@ -177,8 +176,11 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-gradient-to-b from-black via-slate-950 to-black px-4 py-6 text-zinc-100">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+    <>
+      {showCrawlModal && <CrawlModal onCrawlComplete={handleCrawlComplete} />}
+      
+      <main className="flex min-h-screen w-full items-center justify-center bg-gradient-to-b from-black via-slate-950 to-black px-4 py-6 text-zinc-100">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
         <header className="flex items-center justify-between gap-4 px-2">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -328,7 +330,8 @@ export default function HomePage() {
             </form>
           </div>
         </section>
-      </div>
-    </main>
+        </div>
+      </main>
+    </>
   );
 }
