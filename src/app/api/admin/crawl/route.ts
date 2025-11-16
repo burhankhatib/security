@@ -225,14 +225,30 @@ async function crawlSingleSource(url: string, apiKey: string): Promise<any> {
 async function processAndAddToKnowledge(rawData: any, url: string, sourceName: string): Promise<number> {
   const { addCrawledContentToKnowledge } = await import("@/lib/knowledge/crawl");
   
+  console.log(`[Process] Processing data for ${sourceName}:`, {
+    hasPages: !!rawData.pages,
+    pagesCount: rawData.pages?.length || 0,
+    firstPageKeys: rawData.pages?.[0] ? Object.keys(rawData.pages[0]) : [],
+    firstPageContentLength: rawData.pages?.[0]?.content?.length || 0,
+  });
+  
   // Process pages from crawl data
   let totalChunks = 0;
   const crawledAt = new Date().toISOString();
 
   // Process all pages
   if (rawData.pages && Array.isArray(rawData.pages)) {
-    for (const page of rawData.pages) {
-      if (page.content && page.content.trim().length > 20) {
+    console.log(`[Process] Found ${rawData.pages.length} pages to process`);
+    
+    for (let i = 0; i < rawData.pages.length; i++) {
+      const page = rawData.pages[i];
+      const contentLength = page.content?.trim().length || 0;
+      
+      if (i < 3) {
+        console.log(`[Process] Page ${i + 1}: content length = ${contentLength}, title = ${page.title}`);
+      }
+      
+      if (page.content && contentLength > 20) {
         const result = await addCrawledContentToKnowledge({
           url: page.url || url,
           title: `[${sourceName}] ${page.title || "Untitled Page"}`,
@@ -242,9 +258,20 @@ async function processAndAddToKnowledge(rawData: any, url: string, sourceName: s
         
         if (result.success) {
           totalChunks += result.chunksAdded;
+          if (i < 3) {
+            console.log(`[Process] Page ${i + 1} added ${result.chunksAdded} chunks`);
+          }
+        }
+      } else {
+        if (i < 3) {
+          console.log(`[Process] Page ${i + 1} skipped - content too short`);
         }
       }
     }
+    
+    console.log(`[Process] Total chunks added for ${sourceName}: ${totalChunks}`);
+  } else {
+    console.warn(`[Process] No pages array found in rawData for ${sourceName}`);
   }
 
   return totalChunks;
