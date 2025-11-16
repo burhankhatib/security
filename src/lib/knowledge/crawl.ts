@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 
 import {embedMany} from 'ai'
 import {openai} from '@ai-sdk/openai'
@@ -14,7 +15,12 @@ import {
 } from './types'
 
 const EMBEDDING_MODEL = 'text-embedding-3-large'
-const KNOWLEDGE_DIR = path.join(process.cwd(), 'public', 'knowledge')
+
+// Use /tmp in production (Vercel/serverless) or local directory in development
+const KNOWLEDGE_DIR = process.env.VERCEL 
+  ? path.join(os.tmpdir(), 'knowledge')
+  : path.join(process.cwd(), '.cache', 'knowledge')
+
 const KNOWLEDGE_INDEX_PATH = path.join(KNOWLEDGE_DIR, 'knowledge-base.json')
 
 export interface CrawledContent {
