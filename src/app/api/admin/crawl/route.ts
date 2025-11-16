@@ -56,8 +56,11 @@ export async function POST(req: Request) {
   const url = validationResult.data.url || getCrawlSourceUrl();
   const forceRefresh = validationResult.data.forceRefresh || false;
 
+  console.log(`[Crawl API] Target URL: ${url}`);
+
   // Check cache first (unless force refresh is requested)
-  if (!forceRefresh && (await isCrawlCacheValid())) {
+  // Pass current URL to validate cache matches
+  if (!forceRefresh && (await isCrawlCacheValid(url))) {
     const cacheMetadata = await loadCacheMetadata();
     const ageMinutes = await getCacheAgeMinutes();
 

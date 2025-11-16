@@ -12,10 +12,13 @@ import { getCrawlSourceUrl } from "@/lib/config/crawl";
  */
 export async function GET() {
   try {
-    const isValid = await isCrawlCacheValid();
+    const configuredUrl = getCrawlSourceUrl();
+    // Pass current URL to validate cache matches configured URL
+    const isValid = await isCrawlCacheValid(configuredUrl);
     const metadata = await loadCacheMetadata();
     const ageMinutes = await getCacheAgeMinutes();
-    const configuredUrl = getCrawlSourceUrl();
+
+    console.log(`[Cache Check] Configured URL: ${configuredUrl}, Cache valid: ${isValid}, Cached URL: ${metadata?.url || 'none'}`);
 
     return NextResponse.json({
       cacheValid: isValid,
@@ -23,6 +26,7 @@ export async function GET() {
       cacheAgeMinutes: ageMinutes,
       lastCrawledAt: metadata?.lastCrawledAt || null,
       configuredUrl,
+      cachedUrl: metadata?.url || null,
       chunksInCache: metadata?.chunksAdded || 0,
     });
   } catch (error) {

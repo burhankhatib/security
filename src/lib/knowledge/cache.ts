@@ -14,11 +14,18 @@ const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour in milliseconds
 
 /**
  * Check if cached crawl data is still valid
+ * Validates both age and URL match
  */
-export async function isCrawlCacheValid(): Promise<boolean> {
+export async function isCrawlCacheValid(currentUrl?: string): Promise<boolean> {
   try {
     const metadata = await loadCacheMetadata()
     if (!metadata) {
+      return false
+    }
+
+    // If URL is provided and doesn't match cached URL, invalidate cache
+    if (currentUrl && metadata.url !== currentUrl) {
+      console.log(`[Cache] URL changed from ${metadata.url} to ${currentUrl} - invalidating cache`)
       return false
     }
 
@@ -81,6 +88,19 @@ export async function getCacheAgeMinutes(): Promise<number | null> {
     return ageMinutes
   } catch {
     return null
+  }
+}
+
+/**
+ * Clear cache (force new crawl on next request)
+ */
+export async function clearCache(): Promise<void> {
+  try {
+    await fs.unlink(CACHE_METADATA_PATH)
+    console.log('[Cache] Cache metadata cleared')
+  } catch (error) {
+    // File might not exist, that's okay
+    console.log('[Cache] No cache to clear or error clearing:', error)
   }
 }
 
